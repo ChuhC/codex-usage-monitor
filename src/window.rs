@@ -155,7 +155,7 @@ const IDM_ALERT_20: u16 = 82;
 const IDM_ALERT_30: u16 = 83;
 const IDM_PALETTE_SYSTEM: u16 = 90;
 const IDM_PALETTE_DARK: u16 = 91;
-const IDM_PALETTE_LIGHT: u16 = 92;
+const IDM_PALETTE_AMBER: u16 = 92;
 const IDM_BAR_CONTINUOUS: u16 = 93;
 const IDM_BAR_SEGMENTED: u16 = 94;
 const IDM_BAR_STANDARD: u16 = 95;
@@ -164,6 +164,10 @@ const IDM_FONT_STANDARD: u16 = 97;
 const IDM_FONT_LARGE: u16 = 98;
 const IDM_APPEARANCE_RECOMMENDED: u16 = 99;
 const IDM_APPEARANCE_RESET: u16 = 100;
+const IDM_PALETTE_OCEAN: u16 = 101;
+const IDM_PALETTE_ROSE: u16 = 102;
+const IDM_PALETTE_VIOLET: u16 = 103;
+const IDM_SHOW_RESET_TIME: u16 = 104;
 const IDM_MONITOR_FIRST: u16 = 200;
 const MAX_MONITOR_MENU_ITEMS: usize = 100;
 
@@ -346,7 +350,12 @@ enum Palette {
     #[default]
     System,
     HighContrastDark,
-    HighContrastLight,
+    #[serde(alias = "high_contrast_light")]
+    Amber,
+    Ocean,
+    #[serde(alias = "forest")]
+    Rose,
+    Violet,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -373,30 +382,40 @@ enum FontSize {
     Large,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 struct Appearance {
     palette: Palette,
     bar_style: BarStyle,
     bar_thickness: BarThickness,
     font_size: FontSize,
+    show_reset_time: bool,
+}
+
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            palette: Palette::System,
+            bar_style: BarStyle::Segmented,
+            bar_thickness: BarThickness::Standard,
+            font_size: FontSize::Standard,
+            show_reset_time: true,
+        }
+    }
 }
 
 impl Appearance {
-    fn translucent_dark_taskbar() -> Self {
+    fn dark_segmented() -> Self {
         Self {
             palette: Palette::HighContrastDark,
-            bar_style: BarStyle::Continuous,
-            bar_thickness: BarThickness::Slim,
-            font_size: FontSize::Large,
+            bar_style: BarStyle::Segmented,
+            bar_thickness: BarThickness::Standard,
+            font_size: FontSize::Standard,
+            show_reset_time: true,
         }
     }
     fn is_dark(self, system_is_dark: bool) -> bool {
-        match self.palette {
-            Palette::System => system_is_dark,
-            Palette::HighContrastDark => true,
-            Palette::HighContrastLight => false,
-        }
+        system_is_dark
     }
 
     fn font_px(self) -> i32 {
@@ -416,8 +435,8 @@ impl Appearance {
 
     fn bar_height(self) -> i32 {
         sc(match self.bar_thickness {
-            BarThickness::Standard => SEGMENT_H,
-            BarThickness::Slim => 8,
+            BarThickness::Standard => 12,
+            BarThickness::Slim => 9,
         })
     }
 }
@@ -567,6 +586,11 @@ fn load_settings_from_paths(
 }
 
 fn normalize_settings(mut settings: SettingsFile) -> SettingsFile {
+    // Earlier releases used this exact preset as the default. Make that old
+    // default transparent while preserving any other customized appearance.
+    if settings.appearance == Appearance::dark_segmented() {
+        settings.appearance = Appearance::default();
+    }
     if !(POLL_1_MIN..=POLL_1_HOUR).contains(&settings.poll_interval_ms) {
         settings.poll_interval_ms = POLL_15_MIN;
     }
@@ -1609,7 +1633,6 @@ fn set_startup_enabled(enable: bool) {
 
 // Dimensions matching the C# version
 const SEGMENT_W: i32 = 10;
-const SEGMENT_H: i32 = 13;
 const ROW_HEIGHT: i32 = 18;
 const SEGMENT_GAP: i32 = 1;
 const SEGMENT_COUNT: i32 = 10;
@@ -1622,8 +1645,8 @@ const BAR_RIGHT_MARGIN: i32 = 4;
 const TEXT_WIDTH: i32 = 110;
 const SIMPLIFIED_CHINESE_LABEL_WIDTH: i32 = 20;
 const SIMPLIFIED_CHINESE_TEXT_WIDTH: i32 = 138;
-const MODEL_RIGHT_MARGIN: i32 = 3;
-const RIGHT_MARGIN: i32 = 1;
+const MODEL_RIGHT_MARGIN: i32 = 1;
+const RIGHT_MARGIN: i32 = 16;
 const WIDGET_HEIGHT: i32 = 46;
 
 fn is_drag_handle_point(client_x: i32, client_y: i32) -> bool {
@@ -1679,24 +1702,20 @@ fn usage_layout_samples(language: LanguageId) -> (Vec<&'static str>, Vec<String>
 }
 
 unsafe fn create_widget_font(appearance: Appearance) -> HFONT {
-    let font_name = native_interop::wide_str("Microsoft YaHei UI");
+    let font_name = native_interop::wide_str("Segoe UI");
     CreateFontW(
         -sc(appearance.font_px()),
         0,
         0,
         0,
-        if appearance.palette == Palette::System {
-            FW_SEMIBOLD.0 as i32
-        } else {
-            FW_BOLD.0 as i32
-        },
+        FW_NORMAL.0 as i32,
         0,
         0,
         0,
         DEFAULT_CHARSET.0 as u32,
         OUT_TT_PRECIS.0 as u32,
         CLIP_DEFAULT_PRECIS.0 as u32,
-        CLEARTYPE_QUALITY.0 as u32,
+        ANTIALIASED_QUALITY.0 as u32,
         (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
         PCWSTR::from_raw(font_name.as_ptr()),
     )
@@ -1705,6 +1724,18 @@ unsafe fn create_widget_font(appearance: Appearance) -> HFONT {
 /// Label and quota-text column widths in physical pixels, measured with the
 /// fonts used for drawing so larger text and longer translations still fit.
 fn usage_layout_widths(language: LanguageId, appearance: Appearance) -> (i32, i32) {
+    let (label_width, text_width) = usage_layout_widths_full(language, appearance);
+    (
+        label_width,
+        if appearance.show_reset_time {
+            text_width
+        } else {
+            sc(quota_text::reset_offset(appearance.font_px()) - 8)
+        },
+    )
+}
+
+fn usage_layout_widths_full(language: LanguageId, appearance: Appearance) -> (i32, i32) {
     let reset_x = sc(quota_text::reset_offset(appearance.font_px()));
     let fallback = if language == LanguageId::SimplifiedChinese {
         (
@@ -1812,7 +1843,7 @@ fn claude_accent_color() -> Color {
 }
 
 fn appearance_colors(appearance: Appearance, system_is_dark: bool) -> (Color, Color, Color) {
-    match appearance.palette {
+    let (_background, _, track) = match appearance.palette {
         Palette::System if system_is_dark => (
             Color::from_hex("#1C1C1C"),
             Color::from_hex("#888888"),
@@ -1824,46 +1855,46 @@ fn appearance_colors(appearance: Appearance, system_is_dark: bool) -> (Color, Co
             Color::from_hex("#AAAAAA"),
         ),
         Palette::HighContrastDark => (
-            Color::from_hex("#1C1C1C"),
-            Color::from_hex("#FFFFFF"),
-            Color::from_hex("#30343B"),
+            Color::from_hex("#222222"),
+            Color::from_hex("#B8B8B8"),
+            Color::from_hex("#414141"),
         ),
-        Palette::HighContrastLight => (
+        Palette::Amber => (
             Color::from_hex("#F3F3F3"),
             Color::from_hex("#101820"),
             Color::from_hex("#A0A8B2"),
         ),
-    }
+        Palette::Ocean => (
+            Color::from_hex("#172433"),
+            Color::from_hex("#D1DCE8"),
+            Color::from_hex("#34485D"),
+        ),
+        Palette::Rose => (
+            Color::from_hex("#2B1D24"),
+            Color::from_hex("#D3E4D8"),
+            Color::from_hex("#523440"),
+        ),
+        Palette::Violet => (
+            Color::from_hex("#241C2B"),
+            Color::from_hex("#E1D8EA"),
+            Color::from_hex("#46364F"),
+        ),
+    };
+    (
+        Color::from_hex("#FFFFFF"),
+        Color::from_hex("#000000"),
+        track,
+    )
 }
 
 /// Reset times stay quieter than percentages; high-contrast palettes keep them legible.
 fn reset_text_color(appearance: Appearance, is_dark: bool) -> Color {
-    Color::from_hex(match appearance.palette {
-        Palette::System if is_dark => "#B5B5B5",
-        Palette::System => "#666666",
-        Palette::HighContrastDark => "#D8D8D8",
-        Palette::HighContrastLight => "#38424C",
-    })
+    let _ = (appearance, is_dark);
+    Color::from_hex("#000000")
 }
 
 fn antigravity_accent_color() -> Color {
     Color::from_hex("#4285F4")
-}
-
-fn claude_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#F09A7A")
-    } else {
-        Color::from_hex("#A94F32")
-    }
-}
-
-fn antigravity_usage_text_color(is_dark: bool) -> Color {
-    if is_dark {
-        Color::from_hex("#8AB4F8")
-    } else {
-        Color::from_hex("#1967D2")
-    }
 }
 
 pub fn run() {
@@ -2326,9 +2357,8 @@ fn render_layered() {
         let old_bmp = SelectObject(mem_dc, dib);
         let pixel_count = (width * height) as usize;
 
-        // Render once with the actual taskbar background colour.
-        // Using an opaque background lets us use CLEARTYPE_QUALITY for
-        // sub-pixel font rendering that matches the rest of the OS.
+        // Grayscale antialiasing avoids ClearType's colored fringes on the
+        // transparent layered window.
         paint_content(
             mem_dc,
             width,
@@ -2362,19 +2392,23 @@ fn render_layered() {
             &antigravity_accent,
         );
 
-        // System mode blends with the taskbar. High contrast modes use a solid
-        // backdrop, so text stays legible even over translucent wallpapers.
-        let bg_bgr = bg_color.to_colorref();
-        let bg_alpha = if appearance.palette == Palette::System {
-            1u32
-        } else {
-            255u32
-        };
+        // Keep the widget background transparent for every interior palette.
+        // A BI_RGB DIB stores pixels as B,G,R bytes, while COLORREF stores
+        // them as R,G,B bytes in the low-to-high positions.
+        let bg_bgr = ((bg_color.r as u32) << 16) | ((bg_color.g as u32) << 8) | bg_color.b as u32;
+        let track_rgb = ((track.r as u32) << 16) | ((track.g as u32) << 8) | track.b as u32;
         let pixel_data = std::slice::from_raw_parts_mut(bits as *mut u32, pixel_count);
         for px in pixel_data.iter_mut() {
             let rgb = *px & 0x00FFFFFF;
             if rgb == bg_bgr {
-                *px = (bg_alpha << 24) | if bg_alpha == 1 { 0 } else { rgb };
+                *px = 0;
+            } else if rgb != track_rgb
+                && (rgb & 255) == ((rgb >> 8) & 255)
+                && (rgb & 255) == ((rgb >> 16) & 255)
+            {
+                // Black glyphs on white encode grayscale coverage. Recover
+                // premultiplied alpha instead of keeping opaque edge pixels.
+                *px = (255 - (rgb & 255)) << 24;
             } else {
                 *px = rgb | 0xFF000000;
             }
@@ -2472,44 +2506,18 @@ fn paint_content(
         let divider_top = (height - divider_h) / 2;
         let divider_bottom = divider_top + divider_h;
 
-        let (div_left, div_right) = if is_dark {
-            ((80, 80, 80), (40, 40, 40))
-        } else {
-            ((160, 160, 160), (230, 230, 230))
-        };
-
-        let left_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
-            div_left.0, div_left.1, div_left.2,
-        )));
-        let left_rect = RECT {
-            left: 0,
+        let divider_brush = CreateSolidBrush(COLORREF(0));
+        let divider_x = sc(LEFT_DIVIDER_W) / 2;
+        let divider_rect = RECT {
+            left: divider_x,
             top: divider_top,
-            right: sc(2),
+            right: divider_x + 1,
             bottom: divider_bottom,
         };
-        FillRect(hdc, &left_rect, left_brush);
-        let _ = DeleteObject(left_brush);
-
-        let right_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
-            div_right.0,
-            div_right.1,
-            div_right.2,
-        )));
-        let right_rect = RECT {
-            left: sc(2),
-            top: divider_top,
-            right: sc(3),
-            bottom: divider_bottom,
-        };
-        FillRect(hdc, &right_rect, right_brush);
-        let _ = DeleteObject(right_brush);
-
+        FillRect(hdc, &divider_rect, divider_brush);
+        let _ = DeleteObject(divider_brush);
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row_gap = if height < sc(WIDGET_HEIGHT) {
-            sc(2)
-        } else {
-            sc(8)
-        };
+        let row_gap = sc(2);
         let row1_y = (height - 2 * appearance.row_height() - row_gap).max(0) / 2;
         let row2_y = row1_y + appearance.row_height() + row_gap;
         let single_row_y = (height - appearance.row_height()) / 2;
@@ -2527,11 +2535,11 @@ fn paint_content(
         let model_width = model_usage_width(row_bar_segment_count(active_models), text_width)
             + sc(MODEL_RIGHT_MARGIN);
         let mut icon_x = content_x + label_width + sc(LABEL_RIGHT_MARGIN);
-        if show_claude_code {
+        if show_claude_code && active_models > 1 {
             provider_icons::draw(hdc, icon_x, icon_y, icon_size, Provider::Claude);
             icon_x += model_width;
         }
-        if show_codex {
+        if show_codex && active_models > 1 {
             provider_icons::draw(hdc, icon_x, icon_y, icon_size, Provider::Codex);
         }
 
@@ -3570,28 +3578,36 @@ unsafe extern "system" fn wnd_proc(
                 | IDM_APPEARANCE_RESET
                 | IDM_PALETTE_SYSTEM
                 | IDM_PALETTE_DARK
-                | IDM_PALETTE_LIGHT
+                | IDM_PALETTE_AMBER
+                | IDM_PALETTE_OCEAN
+                | IDM_PALETTE_ROSE
+                | IDM_PALETTE_VIOLET
                 | IDM_BAR_CONTINUOUS
                 | IDM_BAR_SEGMENTED
                 | IDM_BAR_STANDARD
                 | IDM_BAR_SLIM
                 | IDM_FONT_STANDARD
+                | IDM_SHOW_RESET_TIME
                 | IDM_FONT_LARGE => {
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             match id {
+                                IDM_SHOW_RESET_TIME => {
+                                    s.appearance.show_reset_time = !s.appearance.show_reset_time
+                                }
                                 IDM_APPEARANCE_RECOMMENDED => {
-                                    s.appearance = Appearance::translucent_dark_taskbar()
+                                    s.appearance.palette = Palette::HighContrastDark
                                 }
                                 IDM_APPEARANCE_RESET => s.appearance = Appearance::default(),
                                 IDM_PALETTE_SYSTEM => s.appearance.palette = Palette::System,
                                 IDM_PALETTE_DARK => {
                                     s.appearance.palette = Palette::HighContrastDark
                                 }
-                                IDM_PALETTE_LIGHT => {
-                                    s.appearance.palette = Palette::HighContrastLight
-                                }
+                                IDM_PALETTE_AMBER => s.appearance.palette = Palette::Amber,
+                                IDM_PALETTE_OCEAN => s.appearance.palette = Palette::Ocean,
+                                IDM_PALETTE_ROSE => s.appearance.palette = Palette::Rose,
+                                IDM_PALETTE_VIOLET => s.appearance.palette = Palette::Violet,
                                 IDM_BAR_CONTINUOUS => s.appearance.bar_style = BarStyle::Continuous,
                                 IDM_BAR_SEGMENTED => s.appearance.bar_style = BarStyle::Segmented,
                                 IDM_BAR_STANDARD => {
@@ -3993,66 +4009,51 @@ fn show_context_menu(hwnd: HWND) {
 
         let chinese = language == LanguageId::SimplifiedChinese;
         let appearance_menu = CreatePopupMenu().unwrap();
-        append_appearance_choice(
-            appearance_menu,
-            IDM_APPEARANCE_RECOMMENDED,
-            appearance == Appearance::translucent_dark_taskbar(),
-            if chinese {
-                "推荐：半透明深色任务栏"
-            } else {
-                "Recommended: translucent dark taskbar"
-            },
-        );
-        append_appearance_choice(
-            appearance_menu,
-            IDM_APPEARANCE_RESET,
-            appearance == Appearance::default(),
-            if chinese {
-                "恢复默认外观"
-            } else {
-                "Reset appearance"
-            },
-        );
-        let _ = AppendMenuW(appearance_menu, MF_SEPARATOR, 0, PCWSTR::null());
         let palette_menu = CreatePopupMenu().unwrap();
         append_appearance_choice(
             palette_menu,
             IDM_PALETTE_SYSTEM,
             appearance.palette == Palette::System,
-            if chinese {
-                "跟随系统"
-            } else {
-                "Follow system"
-            },
+            if chinese { "薄荷绿" } else { "Mint green" },
         );
         append_appearance_choice(
             palette_menu,
             IDM_PALETTE_DARK,
             appearance.palette == Palette::HighContrastDark,
-            if chinese {
-                "高对比深色"
-            } else {
-                "High contrast dark"
-            },
+            if chinese { "珊瑚橙" } else { "Coral orange" },
         );
         append_appearance_choice(
             palette_menu,
-            IDM_PALETTE_LIGHT,
-            appearance.palette == Palette::HighContrastLight,
+            IDM_PALETTE_AMBER,
+            appearance.palette == Palette::Amber,
+            if chinese { "琥珀金" } else { "Amber gold" },
+        );
+        append_appearance_choice(
+            palette_menu,
+            IDM_PALETTE_OCEAN,
+            appearance.palette == Palette::Ocean,
+            if chinese { "海湾蓝" } else { "Ocean blue" },
+        );
+        append_appearance_choice(
+            palette_menu,
+            IDM_PALETTE_ROSE,
+            appearance.palette == Palette::Rose,
+            if chinese { "玫瑰红" } else { "Rose red" },
+        );
+        append_appearance_choice(
+            palette_menu,
+            IDM_PALETTE_VIOLET,
+            appearance.palette == Palette::Violet,
             if chinese {
-                "高对比浅色"
+                "暮光紫"
             } else {
-                "High contrast light"
+                "Twilight violet"
             },
         );
         append_appearance_submenu(
             appearance_menu,
             palette_menu,
-            if chinese {
-                "文字与颜色"
-            } else {
-                "Text and colors"
-            },
+            if chinese { "皮肤" } else { "Skins" },
         );
 
         let style_menu = CreatePopupMenu().unwrap();
@@ -4122,6 +4123,27 @@ fn show_context_menu(hwnd: HWND) {
             appearance_menu,
             font_menu,
             if chinese { "文字大小" } else { "Text size" },
+        );
+        append_appearance_choice(
+            appearance_menu,
+            IDM_SHOW_RESET_TIME,
+            appearance.show_reset_time,
+            if chinese {
+                "显示重置时间"
+            } else {
+                "Show reset time"
+            },
+        );
+        let _ = AppendMenuW(appearance_menu, MF_SEPARATOR, 0, PCWSTR::null());
+        append_appearance_choice(
+            appearance_menu,
+            IDM_APPEARANCE_RESET,
+            appearance == Appearance::default(),
+            if chinese {
+                "恢复默认"
+            } else {
+                "Reset appearance"
+            },
         );
         append_appearance_submenu(
             menu,
@@ -4525,19 +4547,10 @@ fn draw_row(
 ) {
     let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
     let segment_count = row_bar_segment_count(active_models);
-    let use_model_text_colors = active_models > 1 && appearance.palette == Palette::System;
     let is_dark = appearance.is_dark(is_dark);
-    let claude_value_color = if use_model_text_colors {
-        claude_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let codex_value_color = provider_icons::codex_color(is_dark);
-    let antigravity_value_color = if use_model_text_colors {
-        antigravity_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
+    let claude_value_color = *text_color;
+    let codex_value_color = *text_color;
+    let antigravity_value_color = *text_color;
 
     unsafe {
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -4559,7 +4572,7 @@ fn draw_row(
         if show_claude_code {
             draw_usage_bar(
                 hdc,
-                model_x + sc(provider_icons::SIZE + provider_icons::RIGHT_MARGIN),
+                model_x + provider_gutter(segment_count),
                 y,
                 segment_count,
                 claude_percent,
@@ -4576,7 +4589,7 @@ fn draw_row(
         if show_codex {
             draw_usage_bar(
                 hdc,
-                model_x + sc(provider_icons::SIZE + provider_icons::RIGHT_MARGIN),
+                model_x + provider_gutter(segment_count),
                 y,
                 segment_count,
                 codex_percent,
@@ -4593,7 +4606,7 @@ fn draw_row(
         if show_antigravity {
             draw_usage_bar(
                 hdc,
-                model_x + sc(provider_icons::SIZE + provider_icons::RIGHT_MARGIN),
+                model_x + provider_gutter(segment_count),
                 y,
                 segment_count,
                 antigravity_percent,
@@ -4609,9 +4622,16 @@ fn draw_row(
     }
 }
 
+fn provider_gutter(segment_count: i32) -> i32 {
+    if segment_count == SEGMENT_COUNT {
+        0
+    } else {
+        sc(provider_icons::SIZE + provider_icons::RIGHT_MARGIN)
+    }
+}
+
 fn model_usage_width(segment_count: i32, text_width: i32) -> i32 {
-    sc(provider_icons::SIZE + provider_icons::RIGHT_MARGIN)
-        + (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count
+    provider_gutter(segment_count) + (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count
         - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
         + text_width
@@ -4643,7 +4663,20 @@ fn draw_usage_bar(
     let seg_h = appearance.bar_height();
     let seg_gap = sc(SEGMENT_GAP);
     let bar_width = segment_count * (seg_w + seg_gap) - seg_gap;
-    let corner_r = seg_h / 2;
+    let corner_r = if appearance.bar_style == BarStyle::Segmented {
+        sc(2)
+    } else {
+        seg_h / 2
+    };
+    let palette_accent = match appearance.palette {
+        Palette::System => Some(Color::from_hex("#19A887")),
+        Palette::Amber => Some(Color::from_hex("#D9A52B")),
+        Palette::HighContrastDark => Some(Color::from_hex("#DF7D5B")),
+        Palette::Ocean => Some(Color::from_hex("#58A6FF")),
+        Palette::Rose => Some(Color::from_hex("#E56B87")),
+        Palette::Violet => Some(Color::from_hex("#B98AE0")),
+    };
+    let accent = palette_accent.as_ref().unwrap_or(accent);
     let bar_y = y + (appearance.row_height() - seg_h) / 2;
 
     let percent_clamped = usage_bar_fill_percentage(percent, text);
@@ -4672,6 +4705,11 @@ fn draw_usage_bar(
     }
 
     let text_x = bar_x + bar_width + sc(BAR_RIGHT_MARGIN);
+    let text = if appearance.show_reset_time {
+        text
+    } else {
+        text.find('%').map(|end| &text[..=end]).unwrap_or(text)
+    };
     quota_text::draw(
         hdc,
         text_x,
@@ -4847,13 +4885,22 @@ mod tests {
         assert_eq!(old.monitor_device, None);
 
         let customized = SettingsFile {
-            appearance: Appearance::translucent_dark_taskbar(),
+            appearance: Appearance::dark_segmented(),
             ..old
         };
-        assert_eq!(customized.appearance.bar_style, BarStyle::Continuous);
+        assert_eq!(customized.appearance.bar_style, BarStyle::Segmented);
         let json = serde_json::to_string(&customized).unwrap();
         let restored: SettingsFile = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.appearance, Appearance::translucent_dark_taskbar());
+        assert_eq!(restored.appearance, Appearance::dark_segmented());
+        let legacy: Appearance = serde_json::from_str(r#"{"palette":"system"}"#).unwrap();
+        assert!(legacy.show_reset_time);
+        let hidden = Appearance {
+            show_reset_time: false,
+            ..legacy
+        };
+        let restored: Appearance =
+            serde_json::from_str(&serde_json::to_string(&hidden).unwrap()).unwrap();
+        assert!(!restored.show_reset_time);
     }
 
     #[test]

@@ -26,7 +26,7 @@ pub fn reset_offset(font_px: i32) -> i32 {
 
 /// `height` is in physical pixels.
 pub unsafe fn create_reset_font(height: i32) -> HFONT {
-    let face = native_interop::wide_str("Microsoft YaHei UI");
+    let face = native_interop::wide_str("Segoe UI");
     CreateFontW(
         -height,
         0,
@@ -39,7 +39,7 @@ pub unsafe fn create_reset_font(height: i32) -> HFONT {
         DEFAULT_CHARSET.0 as u32,
         OUT_TT_PRECIS.0 as u32,
         CLIP_DEFAULT_PRECIS.0 as u32,
-        CLEARTYPE_QUALITY.0 as u32,
+        ANTIALIASED_QUALITY.0 as u32,
         (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
         PCWSTR(face.as_ptr()),
     )
