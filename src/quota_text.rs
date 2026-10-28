@@ -26,13 +26,13 @@ pub fn reset_offset(font_px: i32) -> i32 {
 
 /// `height` is in physical pixels.
 pub unsafe fn create_reset_font(height: i32) -> HFONT {
-    let face = native_interop::wide_str("Segoe UI");
+    let face = native_interop::wide_str("Segoe UI Variable Text");
     CreateFontW(
         -height,
         0,
         0,
         0,
-        FW_NORMAL.0 as i32,
+        FW_LIGHT.0 as i32,
         0,
         0,
         0,

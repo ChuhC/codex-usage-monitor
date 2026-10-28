@@ -435,8 +435,8 @@ impl Appearance {
 
     fn bar_height(self) -> i32 {
         sc(match self.bar_thickness {
-            BarThickness::Standard => 12,
-            BarThickness::Slim => 9,
+            BarThickness::Standard => 14,
+            BarThickness::Slim => 11,
         })
     }
 }
@@ -1632,7 +1632,7 @@ fn set_startup_enabled(enable: bool) {
 }
 
 // Dimensions matching the C# version
-const SEGMENT_W: i32 = 10;
+const SEGMENT_W: i32 = 12;
 const ROW_HEIGHT: i32 = 18;
 const SEGMENT_GAP: i32 = 1;
 const SEGMENT_COUNT: i32 = 10;
@@ -1702,13 +1702,14 @@ fn usage_layout_samples(language: LanguageId) -> (Vec<&'static str>, Vec<String>
 }
 
 unsafe fn create_widget_font(appearance: Appearance) -> HFONT {
-    let font_name = native_interop::wide_str("Segoe UI");
+    // Match the lighter variable Segoe UI face used by current Windows UI.
+    let font_name = native_interop::wide_str("Segoe UI Variable Text");
     CreateFontW(
         -sc(appearance.font_px()),
         0,
         0,
         0,
-        FW_NORMAL.0 as i32,
+        FW_LIGHT.0 as i32,
         0,
         0,
         0,
